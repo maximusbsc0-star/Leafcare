@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ta">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LeafCare – இலை நோய் கண்டறிதல்</title>
+<style>
+:root{--bg:#f4f8f3;--card:#fff;--ink:#1d2b20;--mut:#5b6b5f;--brand:#2e7d32;--bd:#d9e5d9;--bad:#b3261e}
+@media (prefers-color-scheme:dark){:root{--bg:#101a12;--card:#18251b;--ink:#e6efe7;--mut:#9fb2a3;--brand:#4caf50;--bd:#2c4030;--bad:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,"Noto Sans Tamil",sans-serif;line-height:1.55}
+.wrap{max-width:720px;margin:0 auto;padding:16px}
+h1{text-align:center;margin:.6em 0 .1em}
+.sub{text-align:center;color:var(--mut);margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px;margin:12px 0}
+label.btn,button{font:inherit;font-weight:600;border-radius:10px;border:0;padding:10px 16px;background:var(--brand);color:#fff;cursor:pointer;display:inline-block}
+button:disabled{opacity:.5}
+input[type=file]{display:none}
+#prev{display:none;max-width:100%;max-height:300px;border-radius:12px;margin:12px auto 0}
+h3{margin:.9em 0 .2em;color:var(--brand);font-size:1rem}
+ul{margin:.2em 0;padding-left:1.2em}
+.mut{color:var(--mut);font-size:.9rem}
+.bad{color:var(--bad)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>🌱 LeafCare</h1>
+<p class="sub">இலை படம் upload பண்ணுங்க – நோய் என்ன, என்ன செய்யணும்னு பாருங்க</p>
+
+<div class="card">
+<label class="btn" for="f">📷 இலை படம் தேர்வு</label>
+<input id="f" type="file" accept="image/*">
+<img id="prev" alt="Leaf preview">
+<p><button id="go" disabled>🔍 நோய் கண்டறி</button> <span id="st" class="mut"></span></p>
+</div>
+
+<div id="out" class="card" style="display:none"></div>
+<p class="mut">இது AI மதிப்பீடு மட்டுமே. உறுதிக்கு உள்ளூர் வேளாண் அலுவலர் / KVK-ஐ அணுகுங்க. மருந்து அளவு லேபிளில் உள்ளபடி மட்டும்.</p>
+</div>
+
+<script>
+// 👇 backend deploy பண்ணின பிறகு இங்க உங்க URL போடுங்க (கடைசியில் / வேண்டாம்)
+const API_URL = "https://YOUR-BACKEND-URL";
+
+const f = document.getElementById('f'), prev = document.getElementById('prev'),
+      go = document.getElementById('go'), st = document.getElementById('st'),
+      out = document.getElementById('out');
+let blob = null;
+
+function shrink(file){
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      const r = Math.min(1, 800 / Math.max(img.width, img.height)), c = document.createElement('canvas');
+      c.width = Math.round(img.width * r); c.height = Math.round(img.height * r);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob(b => b ? res(b) : rej(), 'image/jpeg', .85);
+    };
+    img.onerror = rej;
+    img.src = URL.createObjectURL(file);
+  });
+}
+const el = (t, x, c) => { const e = document.createElement(t); if (x != null) e.textContent = x; if (c) e.className = c; return e; };
+function sec(title, arr){
+  if (!arr || !arr.length) return;
+  out.appendChild(el('h3', title));
+  const u = el('ul'); arr.forEach(x => u.appendChild(el('li', x))); out.appendChild(u);
+}
+
+f.onchange = async () => {
+  if (!f.files[0]) return;
+  out.style.display = 'none';
+  try {
+    blob = await shrink(f.files[0]);
+    prev.src = URL.createObjectURL(blob); prev.style.display = 'block';
+    go.disabled = false; st.textContent = '';
+  } catch { st.textContent = 'படத்தை படிக்க முடியல. வேற படம் try பண்ணுங்க.'; }
+};
+
+go.onclick = async () => {
+  go.disabled = true;
+  st.textContent = 'பார்த்துட்டு இருக்கேன்… (முதல் தடவை 30–60 விநாடி ஆகலாம்)';
+  out.style.display = 'none';
+  try {
+    const fd = new FormData(); fd.append('file', blob, 'leaf.jpg');
+    const r = await fetch(API_URL + '/predict', { method: 'POST', body: fd });
+    if (!r.ok) throw new Error();
+    const d = await r.json();
+    out.innerHTML = ''; out.style.display = 'block';
+    out.appendChild(el('h2', d.plant + ' – ' + (d.healthy ? 'ஆரோக்கியமா இருக்கு ✅' : d.disease)));
+    out.appendChild(el('p', 'நம்பகத்தன்மை: ' + d.confidence + '%'));
+    if (!d.sure) out.appendChild(el('p', '⚠️ முடிவு உறுதியில்ல. தெளிவான, ஒரே இலை, நல்ல வெளிச்சத்துல படம் எடுத்து மறுபடி try பண்ணுங்க.', 'bad'));
+    if (d.alternatives && d.alternatives.length)
+      out.appendChild(el('p', 'மற்ற வாய்ப்புகள்: ' + d.alternatives.map(a => a.plant + ' ' + a.disease + ' (' + a.confidence + '%)').join(', '), 'mut'));
+    if (d.advice) {
+      sec('உடனே செய்ய வேண்டியவை', d.advice.steps);
+      sec('இயற்கை வழிகள்', d.advice.organic);
+      sec('மருந்து தேவைப்பட்டால்', d.advice.chemical);
+    }
+    st.textContent = '';
+  } catch {
+    st.textContent = 'Server-ஐ அடைய முடியல. API_URL சரியா இருக்கான்னு, server தூங்கிட்டு இருக்கலாம் – மறுபடி try பண்ணுங்க.';
+  } finally { go.disabled = false; }
+};
+</script>
+</body>
+</html>
